@@ -17,10 +17,12 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"text/template"
 	"time"
 
 	"github.com/argoproj-labs/gitops-promoter/internal/git"
@@ -42,6 +44,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	promoterv1alpha1 "github.com/argoproj-labs/gitops-promoter/api/v1alpha1"
+	"github.com/go-task/slim-sprig/v3"
+)
+
+const (
+	DefaultPRTitleTemplate = "Promote {{ trunc 7 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
+	DefaultPRBodyTemplate  = "This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
 )
 
 type ChangeTransferPolicyReconcilerConfig struct {
@@ -342,6 +350,11 @@ func (r *ChangeTransferPolicyReconciler) creatOrUpdatePullRequest(ctx context.Co
 	}
 	prName := utils.KubeSafeUniqueName(ctx, utils.GetPullRequestName(ctx, gitRepo.Spec.Owner, gitRepo.Spec.Name, ctp.Spec.ProposedBranch, ctp.Spec.ActiveBranch))
 
+	title, body, err := templatePullRequest(gitRepo, ctp)
+	if err != nil {
+		return fmt.Errorf("failed to template pull request: %w", err)
+	}
+
 	var pr promoterv1alpha1.PullRequest
 	err = r.Get(ctx, client.ObjectKey{
 		Namespace: ctp.Namespace,
@@ -368,10 +381,10 @@ func (r *ChangeTransferPolicyReconciler) creatOrUpdatePullRequest(ctx context.Co
 				},
 				Spec: promoterv1alpha1.PullRequestSpec{
 					RepositoryReference: ctp.Spec.RepositoryReference,
-					Title:               fmt.Sprintf("Promote %s to `%s`", ctp.Status.Proposed.DryShaShort(), ctp.Spec.ActiveBranch),
+					Title:               title,
 					TargetBranch:        ctp.Spec.ActiveBranch,
 					SourceBranch:        ctp.Spec.ProposedBranch,
-					Description:         fmt.Sprintf("This PR is promoting the environment branch `%s` which is currently on dry sha %s to dry sha %s.", ctp.Spec.ActiveBranch, ctp.Status.Active.Dry.Sha, ctp.Status.Proposed.Dry.Sha),
+					Description:         body,
 					State:               "open",
 				},
 			}
@@ -394,10 +407,10 @@ func (r *ChangeTransferPolicyReconciler) creatOrUpdatePullRequest(ctx context.Co
 				return fmt.Errorf("failed to get PR %q: %w", pr.Name, err)
 			}
 			prUpdated.Spec.RepositoryReference = ctp.Spec.RepositoryReference
-			prUpdated.Spec.Title = fmt.Sprintf("Promote %s to `%s`", ctp.Status.Proposed.DryShaShort(), ctp.Spec.ActiveBranch)
+			prUpdated.Spec.Title = title
 			prUpdated.Spec.TargetBranch = ctp.Spec.ActiveBranch
 			prUpdated.Spec.SourceBranch = ctp.Spec.ProposedBranch
-			prUpdated.Spec.Description = fmt.Sprintf("This PR is promoting the environment branch `%s` which is currently on dry sha %s to dry sha %s.", ctp.Spec.ActiveBranch, ctp.Status.Active.Dry.Sha, ctp.Status.Proposed.Dry.Sha)
+			prUpdated.Spec.Description = body
 			return r.Update(ctx, &prUpdated)
 		})
 		if err != nil {
@@ -472,4 +485,37 @@ func (r *ChangeTransferPolicyReconciler) mergePullRequests(ctx context.Context, 
 	}
 
 	return nil
+}
+
+func templatePullRequest(gitRepo *promoterv1alpha1.GitRepository, ctp *promoterv1alpha1.ChangeTransferPolicy) (string, string, error) {
+	titleTemplate := gitRepo.Spec.TitleTemplate
+	if titleTemplate == "" {
+		titleTemplate = DefaultPRTitleTemplate
+	}
+
+	tmpl, err := template.New("title").Funcs(sprig.FuncMap()).Parse(titleTemplate)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse PR title template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctp); err != nil {
+		return "", "", fmt.Errorf("failed to execute PR title template: %w", err)
+	}
+	title := buf.String()
+	buf.Reset()
+
+	bodyTemplate := gitRepo.Spec.BodyTemplate
+	if bodyTemplate == "" {
+		bodyTemplate = DefaultPRBodyTemplate
+	}
+	tmpl, err = template.New("body").Funcs(sprig.FuncMap()).Parse(bodyTemplate)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse PR body template: %w", err)
+	}
+	if err := tmpl.Execute(&buf, ctp); err != nil {
+		return "", "", fmt.Errorf("failed to execute PR body template: %w", err)
+	}
+	body := buf.String()
+
+	return title, body, nil
 }
