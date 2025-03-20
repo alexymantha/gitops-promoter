@@ -8,9 +8,7 @@ import (
 	sprig "github.com/go-task/slim-sprig/v3"
 )
 
-var (
-	sanitizedSprigFuncMap = sprig.GenericFuncMap()
-)
+var sanitizedSprigFuncMap = sprig.GenericFuncMap()
 
 func init() {
 	delete(sanitizedSprigFuncMap, "env")
