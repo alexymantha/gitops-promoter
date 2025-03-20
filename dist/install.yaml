@@ -482,6 +482,10 @@ spec:
           spec:
             description: GitRepositorySpec defines the desired state of GitRepository
             properties:
+              bodyTemplate:
+                description: Template used to generate the body of the PR in this
+                  Git repository
+                type: string
               name:
                 type: string
               owner:
@@ -493,6 +497,10 @@ spec:
                 required:
                 - name
                 type: object
+              titleTemplate:
+                description: Template used to create the title of the PR in this Git
+                  repository
+                type: string
             required:
             - name
             - owner
