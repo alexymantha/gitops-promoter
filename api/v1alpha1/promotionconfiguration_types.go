@@ -29,14 +29,18 @@ type PromotionConfigurationSpec struct {
 }
 
 type PullRequestConfiguration struct {
+	Template PullRequestTemplate `json:"template,omitempty"`
+}
+
+type PullRequestTemplate struct {
 	// Template used to generate the title of the pull request.
 	// Uses Go template syntax and Sprig functions are available.
-	// +default:value="Promote {{ trunc 7 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
-	TitleTemplate string `json:"titleTemplate,omitempty"`
-	// Template used to generate the title of the pull request.
+	// +kubebuilder:default:value="Promote {{ trunc 7 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
+	Title string `json:"title,omitempty"`
+	// Template used to generate the body of the pull request.
 	// Uses Go template syntax and Sprig functions are available.
-	// +default:value="This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
-	BodyTemplate string `json:"bodyTemplate,omitempty"`
+	// +kubebuilder:default:value="This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
+	Body string `json:"body,omitempty"`
 }
 
 // PromotionConfigurationStatus defines the observed state of PromotionConfiguration.
