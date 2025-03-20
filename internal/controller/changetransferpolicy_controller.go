@@ -17,12 +17,10 @@ limitations under the License.
 package controller
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
-	"text/template"
 	"time"
 
 	"github.com/argoproj-labs/gitops-promoter/internal/git"
@@ -44,7 +42,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	promoterv1alpha1 "github.com/argoproj-labs/gitops-promoter/api/v1alpha1"
-	"github.com/go-task/slim-sprig/v3"
 )
 
 const (
@@ -350,7 +347,7 @@ func (r *ChangeTransferPolicyReconciler) creatOrUpdatePullRequest(ctx context.Co
 	}
 	prName := utils.KubeSafeUniqueName(ctx, utils.GetPullRequestName(ctx, gitRepo.Spec.Owner, gitRepo.Spec.Name, ctp.Spec.ProposedBranch, ctp.Spec.ActiveBranch))
 
-	title, body, err := templatePullRequest(gitRepo, ctp)
+	title, body, err := TemplatePullRequest(gitRepo, ctp)
 	if err != nil {
 		return fmt.Errorf("failed to template pull request: %w", err)
 	}
@@ -487,35 +484,25 @@ func (r *ChangeTransferPolicyReconciler) mergePullRequests(ctx context.Context, 
 	return nil
 }
 
-func templatePullRequest(gitRepo *promoterv1alpha1.GitRepository, ctp *promoterv1alpha1.ChangeTransferPolicy) (string, string, error) {
+func TemplatePullRequest(gitRepo *promoterv1alpha1.GitRepository, ctp *promoterv1alpha1.ChangeTransferPolicy) (string, string, error) {
 	titleTemplate := gitRepo.Spec.TitleTemplate
 	if titleTemplate == "" {
 		titleTemplate = DefaultPRTitleTemplate
 	}
 
-	tmpl, err := template.New("title").Funcs(sprig.FuncMap()).Parse(titleTemplate)
+	title, err := utils.RenderStringTemplate(titleTemplate, ctp)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to parse PR title template: %w", err)
+		return "", "", fmt.Errorf("failed to render pull request title template: %w", err)
 	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, ctp); err != nil {
-		return "", "", fmt.Errorf("failed to execute PR title template: %w", err)
-	}
-	title := buf.String()
-	buf.Reset()
 
 	bodyTemplate := gitRepo.Spec.BodyTemplate
 	if bodyTemplate == "" {
 		bodyTemplate = DefaultPRBodyTemplate
 	}
-	tmpl, err = template.New("body").Funcs(sprig.FuncMap()).Parse(bodyTemplate)
+	body, err := utils.RenderStringTemplate(bodyTemplate, ctp)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to parse PR body template: %w", err)
+		return "", "", fmt.Errorf("failed to render pull request body template: %w", err)
 	}
-	if err := tmpl.Execute(&buf, ctp); err != nil {
-		return "", "", fmt.Errorf("failed to execute PR body template: %w", err)
-	}
-	body := buf.String()
 
 	return title, body, nil
 }
