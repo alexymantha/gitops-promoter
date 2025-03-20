@@ -7,5 +7,6 @@ metadata:
   name: promotionconfiguration-sample
 spec:
   pullRequest:
-    titleTemplate: "Promote {{ trunc 5 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
-    bodyTemplate: "This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
+    template:
+      title: "Promote {{ trunc 5 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
+      body: "This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
