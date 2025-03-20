@@ -31,10 +31,6 @@ type GitRepositorySpec struct {
 	Name string `json:"name"`
 	// +kubebuilder:validation:Required
 	ScmProviderRef ObjectReference `json:"scmProviderRef"`
-	// Template used to create the title of the PR in this Git repository
-	TitleTemplate string `json:"titleTemplate,omitempty"`
-	// Template used to generate the body of the PR in this Git repository
-	BodyTemplate string `json:"bodyTemplate,omitempty"`
 }
 
 // GitRepositoryStatus defines the observed state of GitRepository

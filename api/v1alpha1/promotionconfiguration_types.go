@@ -25,11 +25,18 @@ import (
 
 // PromotionConfigurationSpec defines the desired state of PromotionConfiguration.
 type PromotionConfigurationSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	PullRequest PullRequestConfiguration `json:"pullRequest,omitempty"`
+}
 
-	// Foo is an example field of PromotionConfiguration. Edit promotionconfiguration_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+type PullRequestConfiguration struct {
+	// Template used to generate the title of the pull request.
+	// Uses Go template syntax and Sprig functions are available.
+	// +default:value="Promote {{ trunc 7 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
+	TitleTemplate string `json:"titleTemplate,omitempty"`
+	// Template used to generate the title of the pull request.
+	// Uses Go template syntax and Sprig functions are available.
+	// +default:value="This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
+	BodyTemplate string `json:"bodyTemplate,omitempty"`
 }
 
 // PromotionConfigurationStatus defines the observed state of PromotionConfiguration.

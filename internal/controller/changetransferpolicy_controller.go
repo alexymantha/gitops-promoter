@@ -44,13 +44,9 @@ import (
 	promoterv1alpha1 "github.com/argoproj-labs/gitops-promoter/api/v1alpha1"
 )
 
-const (
-	DefaultPRTitleTemplate = "Promote {{ trunc 7 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch }}`"
-	DefaultPRBodyTemplate  = "This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}` which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha }}."
-)
-
 type ChangeTransferPolicyReconcilerConfig struct {
-	RequeueDuration time.Duration
+	GlobalPromotionConfigurationName string
+	RequeueDuration                  time.Duration
 }
 
 // ChangeTransferPolicyReconciler reconciles a ChangeTransferPolicy object
@@ -60,6 +56,7 @@ type ChangeTransferPolicyReconciler struct {
 	PathLookup utils.PathLookup
 	Recorder   record.EventRecorder
 	Config     ChangeTransferPolicyReconcilerConfig
+	Namespace  string
 }
 
 //+kubebuilder:rbac:groups=promoter.argoproj.io,resources=changetransferpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -347,7 +344,12 @@ func (r *ChangeTransferPolicyReconciler) creatOrUpdatePullRequest(ctx context.Co
 	}
 	prName := utils.KubeSafeUniqueName(ctx, utils.GetPullRequestName(ctx, gitRepo.Spec.Owner, gitRepo.Spec.Name, ctp.Spec.ProposedBranch, ctp.Spec.ActiveBranch))
 
-	title, body, err := TemplatePullRequest(gitRepo, ctp)
+	promotionConfig := &promoterv1alpha1.PromotionConfiguration{}
+	if err := r.Get(ctx, client.ObjectKey{Name: r.Config.GlobalPromotionConfigurationName, Namespace: r.Namespace}, promotionConfig); err != nil {
+		return fmt.Errorf("failed to get global promotion configuration: %w", err)
+	}
+
+	title, body, err := TemplatePullRequest(&promotionConfig.Spec.PullRequest, ctp)
 	if err != nil {
 		return fmt.Errorf("failed to template pull request: %w", err)
 	}
@@ -484,22 +486,13 @@ func (r *ChangeTransferPolicyReconciler) mergePullRequests(ctx context.Context, 
 	return nil
 }
 
-func TemplatePullRequest(gitRepo *promoterv1alpha1.GitRepository, ctp *promoterv1alpha1.ChangeTransferPolicy) (string, string, error) {
-	titleTemplate := gitRepo.Spec.TitleTemplate
-	if titleTemplate == "" {
-		titleTemplate = DefaultPRTitleTemplate
-	}
-
-	title, err := utils.RenderStringTemplate(titleTemplate, ctp)
+func TemplatePullRequest(prc *promoterv1alpha1.PullRequestConfiguration, ctp *promoterv1alpha1.ChangeTransferPolicy) (string, string, error) {
+	title, err := utils.RenderStringTemplate(prc.TitleTemplate, ctp)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to render pull request title template: %w", err)
 	}
 
-	bodyTemplate := gitRepo.Spec.BodyTemplate
-	if bodyTemplate == "" {
-		bodyTemplate = DefaultPRBodyTemplate
-	}
-	body, err := utils.RenderStringTemplate(bodyTemplate, ctp)
+	body, err := utils.RenderStringTemplate(prc.BodyTemplate, ctp)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to render pull request body template: %w", err)
 	}

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/argoproj-labs/gitops-promoter/internal/webhookreceiver"
+	"github.com/spf13/pflag"
 
 	"go.uber.org/zap/zapcore"
 
@@ -33,6 +34,7 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -68,6 +70,8 @@ func main() {
 	var enableHTTP2 bool
 	var promotionStrategyRequeue string
 	var changeTransferPolicyRequeue string
+	var globalPromotionConfigurationName string
+	var clientConfig clientcmd.ClientConfig
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":9081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
@@ -81,6 +85,8 @@ func main() {
 		"How frequently to requeue promotion strategy resources for auto reconciliation")
 	flag.StringVar(&changeTransferPolicyRequeue, "change-transfer-policy-requeue-duration", "300s",
 		"How frequently to requeue proposed commit resources for auto reconciliation")
+	flag.StringVar(&globalPromotionConfigurationName, "global-promotion-configuration-name", "global-promotion-configuration",
+		"Name of the global promotion configuration")
 	opts := zap.Options{
 		Development: true,
 		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
@@ -89,6 +95,8 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	clientConfig = addKubectlFlags(pflag.CommandLine)
 
 	// Recover any panic and log using the configured logger. This ensures that panics get logged in JSON format if
 	// JSON logging is enabled.
@@ -118,6 +126,12 @@ func main() {
 	webhookServer := webhook.NewServer(webhook.Options{
 		TLSOpts: tlsOpts,
 	})
+
+	controllerNamespace, _, err := clientConfig.Namespace()
+	if err != nil {
+		setupLog.Error(err, "failed to get namespace")
+		os.Exit(1)
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
@@ -208,8 +222,10 @@ func main() {
 		PathLookup: pathLookup,
 		Recorder:   mgr.GetEventRecorderFor("ChangeTransferPolicy"),
 		Config: controller.ChangeTransferPolicyReconcilerConfig{
-			RequeueDuration: ctpRequeueDuration,
+			GlobalPromotionConfigurationName: globalPromotionConfigurationName,
+			RequeueDuration:                  ctpRequeueDuration,
 		},
+		Namespace: controllerNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		panic("unable to create ChangeTransferPolicy controller")
 	}
@@ -263,4 +279,14 @@ func main() {
 		}
 		setupLog.Info("cleaning directory", "directory", path)
 	}
+}
+
+func addKubectlFlags(flags *pflag.FlagSet) clientcmd.ClientConfig {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	loadingRules.DefaultClientConfig = &clientcmd.DefaultClientConfig
+	overrides := clientcmd.ConfigOverrides{}
+	kflags := clientcmd.RecommendedConfigOverrideFlags("")
+	flags.StringVar(&loadingRules.ExplicitPath, "kubeconfig", "", "Path to a kube config. Only required if out-of-cluster")
+	clientcmd.BindOverrideFlags(&overrides, flags, kflags)
+	return clientcmd.NewInteractiveDeferredLoadingClientConfig(loadingRules, &overrides, os.Stdin)
 }
