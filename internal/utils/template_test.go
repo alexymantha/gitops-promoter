@@ -5,9 +5,11 @@ import (
 
 	"github.com/argoproj-labs/gitops-promoter/internal/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRenderStringTemplate(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		template string
 		data     any
@@ -36,11 +38,12 @@ func TestRenderStringTemplate(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			result, err := utils.RenderStringTemplate(test.template, test.data)
 			if test.wantErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 			assert.Equal(t, test.expected, result)
 		})

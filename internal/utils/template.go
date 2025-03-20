@@ -2,30 +2,31 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"text/template"
 
 	sprig "github.com/go-task/slim-sprig/v3"
 )
 
 var (
-	SanitizedSprigFuncMap = sprig.GenericFuncMap()
+	sanitizedSprigFuncMap = sprig.GenericFuncMap()
 )
 
 func init() {
-	delete(SanitizedSprigFuncMap, "env")
-	delete(SanitizedSprigFuncMap, "expandenv")
-	delete(SanitizedSprigFuncMap, "getHostByName")
+	delete(sanitizedSprigFuncMap, "env")
+	delete(sanitizedSprigFuncMap, "expandenv")
+	delete(sanitizedSprigFuncMap, "getHostByName")
 }
 
 func RenderStringTemplate(templateStr string, data any) (string, error) {
-	tmpl, err := template.New("").Funcs(SanitizedSprigFuncMap).Parse(templateStr)
+	tmpl, err := template.New("").Funcs(sanitizedSprigFuncMap).Parse(templateStr)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
 
 	return buf.String(), nil
