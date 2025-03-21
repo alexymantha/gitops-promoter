@@ -240,8 +240,7 @@ func main() {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PromotionConfiguration")
-		os.Exit(1)
+		panic("unable to create PromotionConfiguration controller")
 	}
 	//+kubebuilder:scaffold:builder
 
