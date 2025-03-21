@@ -487,7 +487,7 @@ func (r *ChangeTransferPolicyReconciler) mergePullRequests(ctx context.Context, 
 }
 
 func TemplatePullRequest(prc *promoterv1alpha1.PullRequestConfiguration, ctp *promoterv1alpha1.ChangeTransferPolicy) (string, string, error) {
-	title, err := utils.RenderStringTemplate(prc.Template.Body, ctp)
+	title, err := utils.RenderStringTemplate(prc.Template.Title, ctp)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to render pull request title template: %w", err)
 	}
