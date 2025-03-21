@@ -85,7 +85,7 @@ func main() {
 		"How frequently to requeue promotion strategy resources for auto reconciliation")
 	flag.StringVar(&changeTransferPolicyRequeue, "change-transfer-policy-requeue-duration", "300s",
 		"How frequently to requeue proposed commit resources for auto reconciliation")
-	flag.StringVar(&globalPromotionConfigurationName, "global-promotion-configuration-name", "global",
+	flag.StringVar(&globalPromotionConfigurationName, "global-promotion-configuration-name", "promoter-global",
 		"Name of the global promotion configuration")
 	opts := zap.Options{
 		Development: true,

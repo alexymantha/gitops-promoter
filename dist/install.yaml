@@ -553,16 +553,11 @@ spec:
                   template:
                     properties:
                       body:
-                        default: This PR is promoting the environment branch `{{ .Spec.ActiveBranch
-                          }}` which is currently on dry sha {{ .Status.Active.Dry.Sha
-                          }} to dry sha {{ .Status.Proposed.Dry.Sha }}.
                         description: |-
                           Template used to generate the body of the pull request.
                           Uses Go template syntax and Sprig functions are available.
                         type: string
                       title:
-                        default: Promote {{ trunc 7 .Status.Proposed.Dry.Sha }} to
-                          `{{ .Spec.ActiveBranch }}`
                         description: |-
                           Template used to generate the title of the pull request.
                           Uses Go template syntax and Sprig functions are available.
@@ -1556,3 +1551,21 @@ spec:
           type: RuntimeDefault
       serviceAccountName: promoter-controller-manager
       terminationGracePeriodSeconds: 10
+---
+apiVersion: promoter.argoproj.io/v1alpha1
+kind: PromotionConfiguration
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: promoter
+    app.kubernetes.io/part-of: promoter
+  name: promoter-global
+  namespace: promoter-system
+spec:
+  pullRequest:
+    template:
+      body: This PR is promoting the environment branch `{{ .Spec.ActiveBranch }}`
+        which is currently on dry sha {{ .Status.Active.Dry.Sha }} to dry sha {{ .Status.Proposed.Dry.Sha
+        }}.
+      title: Promote {{ trunc 5 .Status.Proposed.Dry.Sha }} to `{{ .Spec.ActiveBranch
+        }}`
