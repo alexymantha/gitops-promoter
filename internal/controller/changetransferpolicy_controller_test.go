@@ -43,7 +43,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 		ctx := context.Background()
 
 		It("should successfully reconcile the resource - with a pending commit and no commit status checks", func() {
-			name, scmSecret, scmProvider, gitRepo, _, changeTransferPolicy := changeTransferPolicyResources(ctx, "ctp-without-commit-checks", "default")
+			name, scmSecret, scmProvider, gitRepo, _, changeTransferPolicy, promotionConfiguration := changeTransferPolicyResources(ctx, "ctp-without-commit-checks", "default")
 
 			typeNamespacedName := types.NamespacedName{
 				Name:      name,
@@ -58,6 +58,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 			Expect(k8sClient.Create(ctx, scmSecret)).To(Succeed())
 			Expect(k8sClient.Create(ctx, scmProvider)).To(Succeed())
 			Expect(k8sClient.Create(ctx, gitRepo)).To(Succeed())
+			Expect(k8sClient.Create(ctx, promotionConfiguration)).To(Succeed())
 			Expect(k8sClient.Create(ctx, changeTransferPolicy)).To(Succeed())
 
 			gitPath, err := os.MkdirTemp("", "*")
@@ -126,7 +127,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 		})
 
 		It("should successfully reconcile the resource - with a pending commit with commit status checks", func() {
-			name, scmSecret, scmProvider, gitRepo, commitStatus, changeTransferPolicy := changeTransferPolicyResources(ctx, "ctp-with-commit-checks", "default")
+			name, scmSecret, scmProvider, gitRepo, commitStatus, changeTransferPolicy, promotionConfiguration := changeTransferPolicyResources(ctx, "ctp-with-commit-checks", "default")
 
 			typeNamespacedName := types.NamespacedName{
 				Name:      name,
@@ -152,6 +153,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 			Expect(k8sClient.Create(ctx, scmSecret)).To(Succeed())
 			Expect(k8sClient.Create(ctx, scmProvider)).To(Succeed())
 			Expect(k8sClient.Create(ctx, gitRepo)).To(Succeed())
+			Expect(k8sClient.Create(ctx, promotionConfiguration)).To(Succeed())
 			Expect(k8sClient.Create(ctx, commitStatus)).To(Succeed())
 			Expect(k8sClient.Create(ctx, changeTransferPolicy)).To(Succeed())
 
@@ -213,7 +215,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 			webhookPort := WebhookReceiverPort + GinkgoParallelProcess()
 			webhookURL := fmt.Sprintf("http://localhost:%d/", webhookPort)
 
-			name, scmSecret, scmProvider, gitRepo, _, changeTransferPolicy := changeTransferPolicyResources(ctx, "ctp-webhook", "default")
+			name, scmSecret, scmProvider, gitRepo, _, changeTransferPolicy, promotionConfiguration := changeTransferPolicyResources(ctx, "ctp-webhook", "default")
 
 			typeNamespacedName := types.NamespacedName{
 				Name:      name,
@@ -228,6 +230,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 			Expect(k8sClient.Create(ctx, scmSecret)).To(Succeed())
 			Expect(k8sClient.Create(ctx, scmProvider)).To(Succeed())
 			Expect(k8sClient.Create(ctx, gitRepo)).To(Succeed())
+			Expect(k8sClient.Create(ctx, promotionConfiguration)).To(Succeed())
 			Expect(k8sClient.Create(ctx, changeTransferPolicy)).To(Succeed())
 
 			gitPath, err := os.MkdirTemp("", "*")
@@ -284,7 +287,7 @@ var _ = Describe("ChangeTransferPolicy Controller", func() {
 	})
 })
 
-func changeTransferPolicyResources(ctx context.Context, name, namespace string) (string, *v1.Secret, *promoterv1alpha1.ScmProvider, *promoterv1alpha1.GitRepository, *promoterv1alpha1.CommitStatus, *promoterv1alpha1.ChangeTransferPolicy) {
+func changeTransferPolicyResources(ctx context.Context, name, namespace string) (string, *v1.Secret, *promoterv1alpha1.ScmProvider, *promoterv1alpha1.GitRepository, *promoterv1alpha1.CommitStatus, *promoterv1alpha1.ChangeTransferPolicy, *promoterv1alpha1.PromotionConfiguration) {
 	name = name + "-" + utils.KubeSafeUniqueName(ctx, randomString(15))
 	setupInitialTestGitRepoOnServer(name, name)
 
@@ -354,5 +357,13 @@ func changeTransferPolicyResources(ctx context.Context, name, namespace string) 
 		},
 	}
 
-	return name, scmSecret, scmProvider, gitRepo, commitStatus, changeTransferPolicy
+	promotionConfiguration := &promoterv1alpha1.PromotionConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "promoter-global",
+			Namespace: namespace,
+		},
+		Spec: promoterv1alpha1.PromotionConfigurationSpec{},
+	}
+
+	return name, scmSecret, scmProvider, gitRepo, commitStatus, changeTransferPolicy, promotionConfiguration
 }
