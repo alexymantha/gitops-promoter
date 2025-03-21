@@ -85,7 +85,7 @@ func main() {
 		"How frequently to requeue promotion strategy resources for auto reconciliation")
 	flag.StringVar(&changeTransferPolicyRequeue, "change-transfer-policy-requeue-duration", "300s",
 		"How frequently to requeue proposed commit resources for auto reconciliation")
-	flag.StringVar(&globalPromotionConfigurationName, "global-promotion-configuration-name", "global-promotion-configuration",
+	flag.StringVar(&globalPromotionConfigurationName, "global-promotion-configuration-name", "global",
 		"Name of the global promotion configuration")
 	opts := zap.Options{
 		Development: true,
@@ -97,6 +97,12 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	clientConfig = addKubectlFlags(pflag.CommandLine)
+
+	controllerNamespace, _, err := clientConfig.Namespace()
+	if err != nil {
+		setupLog.Error(err, "failed to get namespace")
+		os.Exit(1)
+	}
 
 	// Recover any panic and log using the configured logger. This ensures that panics get logged in JSON format if
 	// JSON logging is enabled.
@@ -126,12 +132,6 @@ func main() {
 	webhookServer := webhook.NewServer(webhook.Options{
 		TLSOpts: tlsOpts,
 	})
-
-	controllerNamespace, _, err := clientConfig.Namespace()
-	if err != nil {
-		setupLog.Error(err, "failed to get namespace")
-		os.Exit(1)
-	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
