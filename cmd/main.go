@@ -19,16 +19,16 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"runtime/debug"
-	"syscall"
 
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/argoproj-labs/gitops-promoter/internal/settings"
 	"github.com/argoproj-labs/gitops-promoter/internal/utils/gitpaths"
-	"github.com/argoproj-labs/gitops-promoter/internal/webhookreceiver"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -39,10 +39,14 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	"sigs.k8s.io/multicluster-runtime/providers/namespace"
 
 	promoterv1alpha1 "github.com/argoproj-labs/gitops-promoter/api/v1alpha1"
 	"github.com/argoproj-labs/gitops-promoter/internal/controller"
@@ -123,7 +127,21 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg, err := clientConfig.ClientConfig()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create rest config: %v", err))
+	}
+
+	cl, err := cluster.New(cfg, func(o *cluster.Options) {
+		o.Scheme = scheme
+	})
+	if err != nil {
+		panic(fmt.Sprintf("failed to create cluster: %v", err))
+	}
+	provider := namespace.New(cl)
+
+	// Setup a cluster-aware Manager, with the provider to lookup clusters.
+	mgr, err := mcmanager.New(cfg, provider, manager.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress:   metricsAddr,
@@ -150,86 +168,84 @@ func main() {
 		panic("unable to start manager")
 	}
 
-	settingsMgr := settings.NewManager(mgr.GetClient(), settings.ManagerConfig{
+	settingsMgr := settings.NewManager(mgr.GetLocalManager().GetClient(), settings.ManagerConfig{
 		ControllerNamespace: controllerNamespace,
 	})
 
 	if err = (&controller.PullRequestReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("PullRequest"),
+		Recorder:    mgr.GetLocalManager().GetEventRecorderFor("PullRequest"),
 		SettingsMgr: settingsMgr,
 	}).SetupWithManager(mgr); err != nil {
 		panic("unable to create PullRequest controller")
 	}
-	if err = (&controller.CommitStatusReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("CommitStatus"),
-		SettingsMgr: settingsMgr,
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create CommitStatus controller")
-	}
-	if err = (&controller.RevertCommitReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("RevertCommit"),
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create RevertCommit controller")
-	}
+	// if err = (&controller.CommitStatusReconciler{
+	// 	Client:      mgr.GetClient(),
+	// 	Scheme:      mgr.GetScheme(),
+	// 	Recorder:    mgr.GetEventRecorderFor("CommitStatus"),
+	// 	SettingsMgr: settingsMgr,
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create CommitStatus controller")
+	// }
+	// if err = (&controller.RevertCommitReconciler{
+	// 	Client:   mgr.GetClient(),
+	// 	Scheme:   mgr.GetScheme(),
+	// 	Recorder: mgr.GetEventRecorderFor("RevertCommit"),
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create RevertCommit controller")
+	// }
 
-	if err = (&controller.PromotionStrategyReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("PromotionStrategy"),
-		SettingsMgr: settingsMgr,
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create PromotionStrategy controller")
-	}
-	if err = (&controller.ScmProviderReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("ScmProvider"),
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create ScmProvider controller")
-	}
-	if err = (&controller.GitRepositoryReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create GitRepository controller")
-	}
+	// if err = (&controller.PromotionStrategyReconciler{
+	// 	Client:      mgr.GetClient(),
+	// 	Scheme:      mgr.GetScheme(),
+	// 	Recorder:    mgr.GetEventRecorderFor("PromotionStrategy"),
+	// 	SettingsMgr: settingsMgr,
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create PromotionStrategy controller")
+	// }
+	// if err = (&controller.ScmProviderReconciler{
+	// 	Client:   mgr.GetClient(),
+	// 	Scheme:   mgr.GetScheme(),
+	// 	Recorder: mgr.GetEventRecorderFor("ScmProvider"),
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create ScmProvider controller")
+	// }
+	// if err = (&controller.GitRepositoryReconciler{
+	// 	Client: mgr.GetClient(),
+	// 	Scheme: mgr.GetScheme(),
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create GitRepository controller")
+	// }
 
-	if err != nil {
-		panic("failed to parse proposed commit requeue duration")
-	}
-	if err = (&controller.ChangeTransferPolicyReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("ChangeTransferPolicy"),
-		SettingsMgr: settingsMgr,
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create ChangeTransferPolicy controller")
-	}
-	if err = (&controller.ArgoCDCommitStatusReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		SettingsMgr: settingsMgr,
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create ArgoCDCommitStatus controller")
-	}
-	if err = (&controller.ControllerConfigurationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create ControllerConfiguration controller")
-	}
-	if err = (&controller.ClusterScmProviderReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		panic("unable to create ClusterScmProvider controller")
-	}
+	// if err != nil {
+	// 	panic("failed to parse proposed commit requeue duration")
+	// }
+	// if err = (&controller.ChangeTransferPolicyReconciler{
+	// 	Client:      mgr.GetClient(),
+	// 	Scheme:      mgr.GetScheme(),
+	// 	Recorder:    mgr.GetEventRecorderFor("ChangeTransferPolicy"),
+	// 	SettingsMgr: settingsMgr,
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create ChangeTransferPolicy controller")
+	// }
+	// if err = (&controller.ArgoCDCommitStatusReconciler{
+	// 	Client:      mgr.GetClient(),
+	// 	Scheme:      mgr.GetScheme(),
+	// 	SettingsMgr: settingsMgr,
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create ArgoCDCommitStatus controller")
+	// }
+	// if err = (&controller.ControllerConfigurationReconciler{
+	// 	Client: mgr.GetClient(),
+	// 	Scheme: mgr.GetScheme(),
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create ControllerConfiguration controller")
+	// }
+	// if err = (&controller.ClusterScmProviderReconciler{
+	// 	Client: mgr.GetClient(),
+	// 	Scheme: mgr.GetScheme(),
+	// }).SetupWithManager(mgr); err != nil {
+	// 	panic("unable to create ClusterScmProvider controller")
+	// }
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -241,20 +257,30 @@ func main() {
 
 	processSignals := ctrl.SetupSignalHandler()
 
-	whr := webhookreceiver.NewWebhookReceiver(mgr)
-	go func() {
-		err = whr.Start(processSignals, ":3333")
-		if err != nil {
-			setupLog.Error(err, "unable to start webhook receiver")
-			err = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
-			if err != nil {
-				setupLog.Error(err, "unable to kill process")
-			}
-		}
-	}()
+	// whr := webhookreceiver.NewWebhookReceiver(mgr)
+	// go func() {
+	// 	err = whr.Start(processSignals, ":3333")
+	// 	if err != nil {
+	// 		setupLog.Error(err, "unable to start webhook receiver")
+	// 		err = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	// 		if err != nil {
+	// 			setupLog.Error(err, "unable to kill process")
+	// 		}
+	// 	}
+	// }()
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(processSignals); err != nil {
+	g, ctx := errgroup.WithContext(processSignals)
+	g.Go(func() error {
+		return provider.Run(ctx, mgr)
+	})
+	g.Go(func() error {
+		return cl.Start(ctx)
+	})
+	g.Go(func() error {
+		return mgr.Start(ctx)
+	})
+	if err := g.Wait(); err != nil {
 		panic("problem running manager")
 	}
 	setupLog.Info("Cleaning up cloned directories")

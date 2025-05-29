@@ -31,20 +31,20 @@ import (
 	"github.com/argoproj-labs/gitops-promoter/internal/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 // PullRequestReconciler reconciles a PullRequest object
 type PullRequestReconciler struct {
-	client.Client
-	Scheme      *runtime.Scheme
+	mgr         mcmanager.Manager
 	Recorder    record.EventRecorder
 	SettingsMgr *settings.Manager
 }
@@ -58,12 +58,18 @@ type PullRequestReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.2/pkg/reconcile
-func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
+func (r *PullRequestReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx, "cluster", req.ClusterName)
 	logger.Info("Reconciling PullRequest")
 
+	cl, err := r.mgr.GetCluster(ctx, req.ClusterName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	c := cl.GetClient()
+
 	var pr promoterv1alpha1.PullRequest
-	if err := r.Get(ctx, req.NamespacedName, &pr); err != nil {
+	if err := c.Get(ctx, req.NamespacedName, &pr); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("PullRequest not found", "namespace", req.Namespace, "name", req.Name)
 			return ctrl.Result{}, nil
@@ -71,18 +77,18 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, fmt.Errorf("failed to get PullRequest: %w", err)
 	}
 
-	provider, err := r.getPullRequestProvider(ctx, pr)
+	provider, err := r.getPullRequestProvider(ctx, c, pr)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get PullRequest provider: %w", err)
 	}
 
-	if deleted, err := r.handleFinalizer(ctx, &pr, provider); err != nil || deleted {
+	if deleted, err := r.handleFinalizer(ctx, c, &pr, provider); err != nil || deleted {
 		return ctrl.Result{}, err
 	}
 
 	if pr.Status.State == promoterv1alpha1.PullRequestMerged || pr.Status.State == promoterv1alpha1.PullRequestClosed {
 		logger.Info("Cleaning up close and merged pull request", "pullRequestID", pr.Status.ID)
-		if err := r.Delete(ctx, &pr); err != nil && !errors.IsNotFound(err) {
+		if err := c.Delete(ctx, &pr); err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to delete PullRequest")
 			return ctrl.Result{}, fmt.Errorf("failed to delete PullRequest: %w", err)
 		}
@@ -101,7 +107,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		pr.Status.ID = id
 	} else if pr.Status.ID != "" {
 		// If we don't find the PR, but we have an ID, it means it was deleted on the provider side
-		if err := r.Delete(ctx, &pr); err != nil {
+		if err := c.Delete(ctx, &pr); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to delete PullRequest resource due to SCM not found: %w", err)
 		}
 		return ctrl.Result{}, nil
@@ -123,7 +129,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			if err := r.mergePullRequest(ctx, &pr, provider); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to merge pull request: %w", err)
 			}
-			if err := r.Delete(ctx, &pr); err != nil {
+			if err := c.Delete(ctx, &pr); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to delete PullRequest: %w", err)
 			}
 			return ctrl.Result{}, nil
@@ -132,7 +138,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			if err := r.closePullRequest(ctx, &pr, provider); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to close pull request: %w", err)
 			}
-			if err := r.Delete(ctx, &pr); err != nil {
+			if err := c.Delete(ctx, &pr); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to delete PullRequest: %w", err)
 			}
 			return ctrl.Result{}, nil
@@ -145,7 +151,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	pr.Status.ObservedGeneration = pr.Generation
-	if err := r.Status().Update(ctx, &pr); err != nil {
+	if err := c.Status().Update(ctx, &pr); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update PullRequest status: %w", err)
 	}
 
@@ -159,9 +165,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{RequeueAfter: pullRequestDuration}, nil
 }
 
-func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	err := ctrl.NewControllerManagedBy(mgr).
-		For(&promoterv1alpha1.PullRequest{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+func (r *PullRequestReconciler) SetupWithManager(mgr mcmanager.Manager) error {
+	r.mgr = mgr
+	err := mcbuilder.ControllerManagedBy(mgr).
+		For(&promoterv1alpha1.PullRequest{}, mcbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("failed to create controller: %w", err)
@@ -169,35 +176,35 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return nil
 }
 
-func (r *PullRequestReconciler) getPullRequestProvider(ctx context.Context, pr promoterv1alpha1.PullRequest) (scms.PullRequestProvider, error) {
-	scmProvider, secret, err := utils.GetScmProviderAndSecretFromRepositoryReference(ctx, r.Client, r.SettingsMgr.GetControllerNamespace(), pr.Spec.RepositoryReference, &pr)
+func (r *PullRequestReconciler) getPullRequestProvider(ctx context.Context, c client.Client, pr promoterv1alpha1.PullRequest) (scms.PullRequestProvider, error) {
+	scmProvider, secret, err := utils.GetScmProviderAndSecretFromRepositoryReference(ctx, c, r.SettingsMgr.GetControllerNamespace(), pr.Spec.RepositoryReference, &pr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ScmProvider and secret: %w", err)
 	}
 
 	switch {
 	case scmProvider.GetSpec().GitHub != nil:
-		return github.NewGithubPullRequestProvider(r.Client, scmProvider, *secret) //nolint:wrapcheck
+		return github.NewGithubPullRequestProvider(c, scmProvider, *secret) //nolint:wrapcheck
 	case scmProvider.GetSpec().GitLab != nil:
-		return gitlab.NewGitlabPullRequestProvider(r.Client, *secret, scmProvider.GetSpec().GitLab.Domain) //nolint:wrapcheck
+		return gitlab.NewGitlabPullRequestProvider(c, *secret, scmProvider.GetSpec().GitLab.Domain) //nolint:wrapcheck
 	case scmProvider.GetSpec().Fake != nil:
-		return fake.NewFakePullRequestProvider(r.Client), nil
+		return fake.NewFakePullRequestProvider(c), nil
 	default:
 		return nil, fmt.Errorf("unsupported SCM provider: %s", scmProvider.GetName())
 	}
 }
 
-func (r *PullRequestReconciler) handleFinalizer(ctx context.Context, pr *promoterv1alpha1.PullRequest, provider scms.PullRequestProvider) (bool, error) {
+func (r *PullRequestReconciler) handleFinalizer(ctx context.Context, c client.Client, pr *promoterv1alpha1.PullRequest, provider scms.PullRequestProvider) (bool, error) {
 	finalizer := "pullrequest.promoter.argoporoj.io/finalizer"
 
 	if pr.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(pr, finalizer) {
 			return false, retry.RetryOnConflict(retry.DefaultRetry, func() error { //nolint:wrapcheck
-				if err := r.Get(ctx, client.ObjectKeyFromObject(pr), pr); err != nil {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(pr), pr); err != nil {
 					return err //nolint:wrapcheck
 				}
 				if controllerutil.AddFinalizer(pr, finalizer) {
-					return r.Update(ctx, pr)
+					return c.Update(ctx, pr)
 				}
 				return nil
 			})
@@ -207,7 +214,7 @@ func (r *PullRequestReconciler) handleFinalizer(ctx context.Context, pr *promote
 			return false, fmt.Errorf("failed to close pull request: %w", err)
 		}
 		controllerutil.RemoveFinalizer(pr, finalizer)
-		if err := r.Update(ctx, pr); err != nil {
+		if err := c.Update(ctx, pr); err != nil {
 			return true, fmt.Errorf("failed to remove finalizer: %w", err)
 		}
 		return true, nil
