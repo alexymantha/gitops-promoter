@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 	"runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/pflag"
@@ -39,6 +40,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -67,6 +69,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var watchNamespaces string
 	var clientConfig clientcmd.ClientConfig
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":9081", "The address the probe endpoint binds to.")
@@ -77,6 +80,7 @@ func main() {
 		"If set the metrics endpoint is served securely")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&watchNamespaces, "watch-namespaces", "Comma-separated list of additional namespaces to watch. If empty, runs in cluster scope.", "")
 	opts := zap.Options{
 		Development: true,
 		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
@@ -92,6 +96,17 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "failed to get namespace")
 		os.Exit(1)
+	}
+
+	defaultNamespaces := map[string]cache.Config(nil)
+	if watchNamespaces != "" {
+		namespaces := strings.Split(watchNamespaces, ",")
+		// Namespace where the controller is running must always be watched to have access to its own resources.
+		namespaces = append(namespaces, controllerNamespace)
+		defaultNamespaces = make(map[string]cache.Config, len(namespaces))
+		for _, ns := range namespaces {
+			defaultNamespaces[ns] = cache.Config{}
+		}
 	}
 
 	// Recover any panic and log using the configured logger. This ensures that panics get logged in JSON format if
@@ -129,6 +144,9 @@ func main() {
 			BindAddress:   metricsAddr,
 			SecureServing: secureMetrics,
 			TLSOpts:       tlsOpts,
+		},
+		Cache: cache.Options{
+			DefaultNamespaces: defaultNamespaces,
 		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
